@@ -1,6 +1,12 @@
 # Slicing Simulator Project
 
-This project is part of a networking course. 
+## Overview
+This project is part of a networking course and showcases a simulation a network slicing.
+
+The goal of this implementation is to test different ressource reallocation policies and compare the results.
+
+## The simulation
+We consider 1 base antenna divided into 2 virtual slices, each with their specified quality of service.
 
 ## How to run the code
 - Clone the Repository 
