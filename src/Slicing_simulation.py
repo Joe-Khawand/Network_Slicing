@@ -51,7 +51,7 @@ class Slice(object):
         """
         packet_size=self.sdist()
         self.N+=1
-        logging.info("Slice id :"+str(self.id)+" | User "+str(id)+ " joined. Packet size to send : "+str(packet_size)+" Interrupting ongoing connections.")
+        logging.info("Slice id :"+str(self.id)+" |\033[92m User "+str(id)+" joined\033[00m. Packet size to send : "+str(packet_size)+" Interrupting ongoing connections.")
         for i,event in enumerate(self.event_list):
             if(i!=id) and  not (i in self.done_users):
                 event.set()
@@ -82,7 +82,7 @@ class Slice(object):
 
                     self.done_users.append(id)
                     transmit=False
-                    logging.info("Slice id :"+str(self.id)+" | User "+str(id)+ " disconnected")
+                    logging.info("Slice id :"+str(self.id)+" |\033[91m User "+str(id)+ " disconnected\033[00m")
                     break
                 #######################################
                
@@ -103,10 +103,10 @@ class Slice(object):
 
                 self.done_users.append(id)
                 transmit=False
-                logging.info("Slice id :"+str(self.id)+" | User "+str(id)+ " disconnected")
+                logging.info("Slice id :"+str(self.id)+" |\033[91m User "+str(id)+ " disconnected\033[00m")
             except ConnectionAbortedError:
                 #Change data rate and retransmit
-                logging.info("Slice id :"+str(self.id)+" | REALLOCATING for user "+str(id)+" with "+ str(self.N)+" users ")
+                logging.info("Slice id :"+str(self.id)+" |\033[94m REALLOCATING\033[00m for user "+str(id)+" with "+ str(self.N)+" users ")
                 #Calculate size left
                 time_remaining=time_to_send-time.time()+start_time
                 packet_size=time_remaining*user_rate
