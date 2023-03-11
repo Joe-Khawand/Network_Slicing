@@ -1,13 +1,14 @@
-import simpy
 import numpy as np
 import matplotlib.pyplot as plt
 import functools
 import random
+import multiprocessing
 import threading
-import logging
+#import logging
 import time
 import sys
 import cvxpy as cp
+
 
 #TODO add capacity checking and requesting from central ressource
 class Slice(object):
@@ -28,17 +29,19 @@ class Slice(object):
         N_max: maximum number of users
 
     """
-    def __init__(self, id,  adist, sdist,N_max,rate=1):
+    def __init__(self, id,  adist, sdist,C,N_max,rate=1):
         self.id = id    
         self.adist = adist
         self.sdist = sdist
         self.files_sent = 0
         self.rate=rate
+        #self.N=multiprocessing.Value('i',0)
         self.N=0
         self.user_list=[]
         self.event_list=[]
         self.done_users=[]
         self.N_max=N_max
+        self.C=C
 
         #TODO add lists for graphs and statistics 
         #graphing
@@ -51,7 +54,7 @@ class Slice(object):
         """
         packet_size=self.sdist()
         self.N+=1
-        logging.info("Slice id :"+str(self.id)+" |\033[92m User "+str(id)+" joined\033[00m. Packet size to send : "+str(packet_size)+" Interrupting ongoing connections.")
+        print("Slice id :"+str(self.id)+" |\033[92m User "+str(id)+" joined\033[00m. Packet size to send : "+str(packet_size)+" Interrupting ongoing connections.")
         for i,event in enumerate(self.event_list):
             if(i!=id) and  not (i in self.done_users):
                 event.set()
@@ -59,9 +62,8 @@ class Slice(object):
                 event.clear()
                 
         
-        
         start_time=time.time()
-        logging.info("Slice id :"+str(self.id)+" | N is equal to : "+str(self.N))
+        print("Slice id :"+str(self.id)+" | N is equal to : "+str(self.N))
         transmit=True
 
         while(transmit):
@@ -69,7 +71,7 @@ class Slice(object):
                 start_time=time.time()
                 #TODO add ressource usage
                 user_rate=self.rate/self.N
-                logging.info("Slice id :"+str(self.id)+" | User "+str(id)+ "  Rate is "+str(user_rate))
+                print("Slice id :"+str(self.id)+" | User "+str(id)+ "  Rate is "+str(user_rate))
                 time_to_send=packet_size/user_rate
 
                 #Redundency to insure good functionning
@@ -82,11 +84,11 @@ class Slice(object):
 
                     self.done_users.append(id)
                     transmit=False
-                    logging.info("Slice id :"+str(self.id)+" |\033[91m User "+str(id)+ " disconnected\033[00m")
+                    print("Slice id :"+str(self.id)+" |\033[91m User "+str(id)+ " disconnected\033[00m")
                     break
                 #######################################
                
-                time.sleep(0.1)
+                time.sleep(0.15)
 
                 #Send file. Interrupt if event is activated
                 self.event_list[id].wait(time_to_send)
@@ -103,14 +105,14 @@ class Slice(object):
 
                 self.done_users.append(id)
                 transmit=False
-                logging.info("Slice id :"+str(self.id)+" |\033[91m User "+str(id)+ " disconnected\033[00m")
+                print("Slice id :"+str(self.id)+" |\033[91m User "+str(id)+ " disconnected\033[00m")
             except ConnectionAbortedError:
                 #Change data rate and retransmit
-                logging.info("Slice id :"+str(self.id)+" |\033[94m REALLOCATING\033[00m for user "+str(id)+" with "+ str(self.N)+" users ")
+                print("Slice id :"+str(self.id)+" |\033[94m REALLOCATING\033[00m for user "+str(id)+" with "+ str(self.N)+" users ")
                 #Calculate size left
                 time_remaining=time_to_send-time.time()+start_time
                 packet_size=time_remaining*user_rate
-                logging.info("Slice id :"+str(self.id)+" | Remaining size for user "+str(id)+" : "+str(packet_size))
+                print("Slice id :"+str(self.id)+" | Remaining size for user "+str(id)+" : "+str(packet_size))
 
         #Reallocate at disconnection
         for i,event in enumerate(self.event_list):
@@ -121,10 +123,10 @@ class Slice(object):
                 event.clear()
                 
 
-    def run(self):
+    def run(self,simulation_status):
         """The generator function used in simulations.
         """
-        logging.info("\033[92m"+"Running "+str(self.id)+"\033[00m")
+        print("\033[92m"+"Running "+str(self.id)+"\033[00m")
         counter=0
         
         while not simulation_status.is_set():
@@ -134,7 +136,7 @@ class Slice(object):
             # create a new user and append to user list
             if(len(self.user_list)-len(self.done_users))<=self.N_max:
                 
-                self.user_list.append(threading.Thread(target=self.slice_user,args=(counter,),daemon=True))
+                self.user_list.append(threading.Thread(target=self.slice_user,args=(counter,)))
                 self.event_list.append(threading.Event())
                 self.user_list[-1].start()
 
@@ -151,21 +153,21 @@ class Network:
         t: Simulation time
 
     """
-    def __init__(self,C,t):
+    def __init__(self,C,t,simulation_status):
         self.simulation_time=t
         #TODO set central capacity
-        self.C=C
+        self.C=multiprocessing.Value('f',C)
         
 
         #Define the functions for data rates and interarrival rates
-        self.adist=[functools.partial(random.expovariate, 1/3.65),functools.partial(random.expovariate, 1/1.2)]
+        self.adist=[functools.partial(random.expovariate, 1/1),functools.partial(random.expovariate, 1/1)]
         self.sdist=[functools.partial(random.expovariate, 1/20),functools.partial(random.expovariate, 1/0.8)]
         
-        self.slice1= Slice( "\033[93m"+"Slice1"+"\033[00m", self.adist[0], self.sdist[0],10)
-        self.slice2= Slice( "\033[96m"+"Slice2"+"\033[00m", self.adist[1], self.sdist[1],10)
+        self.slice1= Slice( "\033[93m"+"Slice1"+"\033[00m", self.adist[0], self.sdist[0],self.C,10)
+        self.slice2= Slice( "\033[96m"+"Slice2"+"\033[00m", self.adist[1], self.sdist[1],self.C,10)
 
-        self.thread1=threading.Thread(target=self.slice1.run,daemon=True)
-        self.thread2=threading.Thread(target=self.slice2.run,daemon=True)
+        self.thread1=multiprocessing.Process(target=self.slice1.run,args=(simulation_status,),daemon=True)
+        self.thread2=multiprocessing.Process(target=self.slice2.run,args=(simulation_status,),daemon=True)
     
     def run(self):
         self.thread1.start()
@@ -180,7 +182,7 @@ class Network:
             ax.plot(self.slice1.time_list,self.slice1.sent_list)
             plt.show()
         
-        logging.info("\033[92m"+"Network simulation complete"+"\033[00m")
+        print("\033[92m"+"Network simulation complete"+"\033[00m")
 
 
 def solve_optimisation(Ns,C,Rmin,Rmax):
@@ -236,13 +238,7 @@ if __name__ == '__main__':
     except TypeError:
         raise TypeError("Input has to be an integer")
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(message)s",
-        datefmt="%H:%M:%S"
-    )
-    
-    simulation_status=threading.Event()
-    net=Network(8000,simulation_time)
+    simulation_status=multiprocessing.Event()
+    net=Network(8000,simulation_time,simulation_status)
     number_of_slices=2
     net.run()
