@@ -136,7 +136,7 @@ class Slice(object):
             # create a new user and append to user list
             if(len(self.user_list)-len(self.done_users))<=self.N_max:
                 
-                self.user_list.append(threading.Thread(target=self.slice_user,args=(counter,)))
+                self.user_list.append(threading.Thread(target=self.slice_user,args=(counter,),daemon=True))
                 self.event_list.append(threading.Event())
                 self.user_list[-1].start()
 
@@ -166,12 +166,12 @@ class Network:
         self.slice1= Slice( "\033[93m"+"Slice1"+"\033[00m", self.adist[0], self.sdist[0],self.C,10)
         self.slice2= Slice( "\033[96m"+"Slice2"+"\033[00m", self.adist[1], self.sdist[1],self.C,10)
 
-        self.thread1=multiprocessing.Process(target=self.slice1.run,args=(simulation_status,),daemon=True)
-        self.thread2=multiprocessing.Process(target=self.slice2.run,args=(simulation_status,),daemon=True)
+        self.process1=multiprocessing.Process(target=self.slice1.run,args=(simulation_status,),daemon=True)
+        self.process2=multiprocessing.Process(target=self.slice2.run,args=(simulation_status,),daemon=True)
     
     def run(self):
-        self.thread1.start()
-        self.thread2.start()
+        self.process1.start()
+        self.process2.start()
 
         time.sleep(self.simulation_time)
         simulation_status.set()
@@ -182,7 +182,17 @@ class Network:
             ax.plot(self.slice1.time_list,self.slice1.sent_list)
             plt.show()
         
+        try:
+            self.process1.close()
+        except:
+            pass
+        try:
+            self.process2.close()
+        except:
+            pass
+
         print("\033[92m"+"Network simulation complete"+"\033[00m")
+
 
 
 def solve_optimisation(Ns,C,Rmin,Rmax):
