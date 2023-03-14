@@ -320,17 +320,17 @@ def monitor(c_1,c_2,n_1,n_2,rmin,rmax,simulation_status,simulation_time,simu_typ
         # Plot rs1_list on first subplot
         ax1.plot(time_list, rs1_list, color='blue')
         ax1.set_ylabel('Rs1')
-        ax1.set_xlabel('time')
+        
 
         # Plot rs2_list on second subplot
         ax2.plot(time_list, rs2_list, color='red')
         ax2.set_ylabel('Rs2')
-        ax1.set_xlabel('time')
+        
 
         # Plot n1_list on first subplot
         ax3.plot(time_list, n1_list, color='blue')
         ax3.set_ylabel('Ns1')
-        ax3.set_xlabel('time')
+        
 
         # Plot n2_list on first subplot
         ax4.plot(time_list, n2_list, color='red')
