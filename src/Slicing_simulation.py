@@ -220,11 +220,18 @@ class Network:
 
         self.process1=multiprocessing.Process(target=self.slice1.run,args=(simulation_status,self.resclicing_event,),daemon=True)
         self.process2=multiprocessing.Process(target=self.slice2.run,args=(simulation_status,self.resclicing_event,),daemon=True)
+
+
+        self.monitor_process=multiprocessing.Process(target=monitor,args=(self.C_vector[0],self.C_vector[1],self.N[0],self.N[1],self.rmin_v,self.rmax_v,simulation_status,self.simulation_time,),daemon=False)
     
+    
+
     def run(self):
         
         self.process1.start()
         self.process2.start()
+
+        self.monitor_process.start()
 
         #? Static assignement
         #TODO add monitoring for graph generation
@@ -285,12 +292,6 @@ class Network:
         
         #Activate end of simulation event
         simulation_status.set()
-
-        #TODO add graph saving option
-        if(False):
-            fig,ax = plt.subplots()
-            ax.plot(self.slice1.time_list,self.slice1.sent_list)
-            plt.show()
         
         try:
             self.process1.close()
@@ -303,6 +304,61 @@ class Network:
 
         print("\033[92m"+"Network simulation complete"+"\033[00m")
 
+
+def monitor(c_1,c_2,n_1,n_2,rmin,rmax,simulation_status,simulation_time):
+        """Function monitoring the slices to generate graphs
+        """
+        init_time=time.time()
+        time_list=[]
+        rs1_list=[]
+        rs2_list=[]
+        #start time
+        time.sleep(2)
+        while not simulation_status.is_set():
+            time_list.append(time.time()-init_time)
+            try:
+                rs1_list.append(c_1.value/n_1.value)
+            except:
+                rs1_list.append(None)
+                pass
+            try:
+                rs2_list.append(c_2.value/n_2.value)
+            except:
+                rs2_list.append(None)
+                pass
+            time.sleep(0.05)
+
+        print("")
+        print("####### Printing graphs ########")
+        print("")
+        # Create figure and subplots
+        fig, (ax1, ax2) = plt.subplots(2, 1, sharex=False)
+
+        # Plot rs1_list on first subplot
+        ax1.plot(time_list, rs1_list, color='blue')
+        ax1.set_ylabel('Rs1')
+
+        # Plot rs2_list on second subplot
+        ax2.plot(time_list, rs2_list, color='red')
+        ax2.set_ylabel('Rs2')
+
+        #Plot Rsmin and Rsmax for each graph
+        ax1.axhline(y=rmin[0], color='green', linestyle='-')
+        ax1.axhline(y=rmax[0], color='orange', linestyle='-')
+        ax2.axhline(y=rmin[1], color='green', linestyle='-')
+        ax2.axhline(y=rmax[1], color='orange', linestyle='-')
+
+        #Draw vertical Axes for reslicing
+        count=simulation_time/10
+        for i in range(1,int(simulation_time),int(simulation_time/10)):
+            ax1.axvline(x=i, color='yellow', linestyle='--')
+            ax2.axvline(x=i, color='yellow', linestyle='--')
+
+        # Add x-axis label to bottom subplot
+        ax2.set_xlabel('time')
+
+        # Show plot
+        plt.show()
 
 
 def solve_optimisation(Ns,Ncont,C,Rmin,Rmax):
