@@ -6,7 +6,7 @@ import multiprocessing
 import threading
 import time
 import sys
-import cvxpy as cp
+import cvxpy as cp #Convex optimisation solver library
 
 
 class Slice(object):
@@ -18,14 +18,22 @@ class Slice(object):
             a no parameter function that returns the successive inter-arrival times of connections
         sdist : function
             a no parameter function that returns the successive sizes of the files to be transferred
-        C : float
+        Cs : float shared variable
             Ressource allocated by the antenna for the slice
-            
         N : int shared variable
             number of active users, starts at 0, increases after each active thread
-        slice_type: Type of slice
         N_max: int
-            maximum number of users
+            maximum number of users. 
+            NB: THIS IS ONLY TO ENSURE A RESONABLE SIZE SIMULATION AND IS SET TO A VALUE THAT IS NOT ATTAIGNED BY THE SIMULATION.
+        Rmin: float
+            mimimum user data rate demanded by the slice
+        Rmax: float
+            maximum user data rate required by the slice
+        gamma : float
+            share fraction of the main antenna
+        files_sent: float shared variable
+            variable for counting number of sent files.
+            This is used to give a final report.
 
     """
     def __init__(self, id,  adist, sdist,Cs,N,N_max,Rmin,Rmax,gamma,files_sent):#the rate has to become the shared variable
@@ -55,6 +63,12 @@ class Slice(object):
 
     def slice_user(self,id):
         """Simulation of a user connceting to the slice and requesting download
+
+            Parameters
+            ----------
+            id: int
+                User id.
+
         """
         packet_size=self.sdist()
         self.N.value+=1
@@ -72,8 +86,6 @@ class Slice(object):
 
         while(transmit):
             try:
-                
-                #TODO add ressource usage
                 user_rate=self.Cs.value/self.N.value
                 print("Slice id :"+str(self.id)+" | User "+str(id)+ "  Rate is "+str(user_rate))
 
@@ -98,6 +110,7 @@ class Slice(object):
                 start_time=time.time()
                 self.event_list[id].wait(time_to_send)
 
+                #Network reslicing reallocation event
                 if(self.network_event.is_set()):
                     raise StopIteration()
 
@@ -132,10 +145,19 @@ class Slice(object):
 
     def run(self,simulation_status,reslicing_event):
         """The generator function used in simulations.
+
+            Parameters
+            ----------
+            simulation_status : multiprocess Event
+                Signals te end of the simulation
+            reslicing_event : multoprocess Event
+                Singals a reslicing event promting internal slice ressource reallocation
+        
         """
         print("\033[92m"+"Running "+str(self.id)+"\033[00m")
         counter=0
-        
+
+        #Loop creating new user connections every self.adist() seconds        
         while not simulation_status.is_set():
             # wait for next connection
             reslicing_event.wait(self.adist())
@@ -163,11 +185,12 @@ class Network:
 
         Parameters
         ----------
-        C: Central capacity of the network
+        C: float
+            Central capacity of the network
         t: float
             Simulation time
-        simulation_status: Event
-            event announcing the end of the simulation when set
+        simulation_status: multiprocessing Event
+            Event announcing the end of the simulation when set
         resclicing_trigger: int
             0 for static
             1 for timed
@@ -184,6 +207,7 @@ class Network:
         self.adist=[functools.partial(random.expovariate, 1/2),functools.partial(random.expovariate, 1/1)]
         self.sdist=[functools.partial(random.expovariate, 1/35),functools.partial(random.expovariate, 1/1)]
 
+        #Define the charateristics of each slice:
         self.rmin_v=[0.1,1]
         self.rmax_v=[7,1.5]
 
@@ -193,33 +217,33 @@ class Network:
         self.N=[multiprocessing.Value('i',0),multiprocessing.Value('i',0)]
         self.C_vector=[multiprocessing.Value('f',self.C_value*self.gamma_v[0]),multiprocessing.Value('f',self.C_value*self.gamma_v[1])]
 
+        #Create an event prompting reslicing in the slice processes
         self.resclicing_event=multiprocessing.Event()
 
+        #Create a file sent count for final repotrt
         self.files_sent=[multiprocessing.Value('i',0),multiprocessing.Value('i',0)]
 
         self.slice1= Slice( "\033[93m"+"Slice1"+"\033[00m", self.adist[0], self.sdist[0],self.C_vector[0],self.N[0],100,self.rmin_v[0],self.rmax_v[0],self.gamma_v[0],self.files_sent[0])
         self.slice2= Slice( "\033[96m"+"Slice2"+"\033[00m", self.adist[1], self.sdist[1],self.C_vector[1],self.N[1],100,self.rmin_v[1],self.rmax_v[1],self.gamma_v[1],self.files_sent[1])
 
+        #Create the processes
         self.process1=multiprocessing.Process(target=self.slice1.run,args=(simulation_status,self.resclicing_event,),daemon=True)
         self.process2=multiprocessing.Process(target=self.slice2.run,args=(simulation_status,self.resclicing_event,),daemon=True)
-
 
         self.monitor_process=multiprocessing.Process(target=monitor,args=(self.C_vector[0],self.C_vector[1],self.N[0],self.N[1],self.rmin_v,self.rmax_v,simulation_status,self.simulation_time,self.resclicing_trigger,),daemon=False)
     
     
 
     def run(self):
-        
+        #Start slices
         self.process1.start()
         self.process2.start()
-
+        #Start monitor for graph generation
         self.monitor_process.start()
 
         #? Static assignement
-        #TODO add monitoring for graph generation
         if self.resclicing_trigger==0:
             time.sleep(self.simulation_time)
-            
 
         #? Timed resclicing
         elif self.resclicing_trigger==1:
@@ -232,7 +256,6 @@ class Network:
                 Ns_now=[self.N[0].value,self.N[1].value]
 
                 #Reslice
-                #TODO activate reallocation list
                 #? Case 1: maximum throuput
                 if(np.dot(Ns_now,self.rmax_v)<=self.C_value):
                     for i in range(number_of_slices):
@@ -361,11 +384,16 @@ def solve_optimisation(Ns,Ncont,C,Rmin,Rmax):
 
         Parameters
         ----------
-        Ns : vector of active user per slice
-        Ncont : limit number of users ensuring performance isolation
-        C : Available common capacity
-        Rmin : minimum data rate per slice
-        Rmax : maximum data rate per slice
+        Ns : int array
+            vector of active user per slice
+        Ncont : int array
+            limit number of users ensuring performance isolation
+        C : float
+            Available common capacity
+        Rmin : float array
+            minimum data rate per slice
+        Rmax : float array
+            maximum data rate per slice
     """
 
     #Define Variable to be resolved
@@ -388,8 +416,10 @@ def W_func(Ns,Ncont):
     
         Parameters
         ----------
-        Ncont: array of maximum number of active users per slice
-        Ns : array number of active users in the slice
+        Ncont: int array
+            limit number of users ensuring performance isolation
+        Ns : int array
+            array number of active users in the slice
     """
     assert len(Ns)==len(Ncont)==number_of_slices
     result=[]
