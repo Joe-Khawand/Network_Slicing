@@ -16,7 +16,7 @@ We consider 1 base antenna divided into 2 virtual slices, each with their specif
   ```
 - Then simply run the __Slicing_simulation.py__ file in __./src__ as such :
     ```
-    python3 Sclicing_simulation.py <simulation_time>
+    python3 Sclicing_simulation.py <simulation_time> <type_of_reclicing_trigger>
     ```
 ## Report
 

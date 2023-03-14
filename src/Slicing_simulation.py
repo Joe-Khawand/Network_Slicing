@@ -11,6 +11,8 @@ import cvxpy as cp
 
 
 #TODO add capacity checking and requesting from central ressource
+# We do that by creating queues to send data flows form inside the processes
+
 class Slice(object):
     """ Slice of an antenna. Simulates traffic that arrives each adist() and requests a file with sdist() size.
 
@@ -20,28 +22,38 @@ class Slice(object):
             a no parameter function that returns the successive inter-arrival times of connections
         sdist : function
             a no parameter function that returns the successive sizes of the files to be transferred
-        C : Central ressource
-            Central capacity of the antenna
-        rate : data rate
-        N : number of active users
-            starts at 0, increases after each active thread
+        C : float
+            Ressource allocated by the antenna for the slice
+            
+        N : int shared variable
+            number of active users, starts at 0, increases after each active thread
         slice_type: Type of slice
-        N_max: maximum number of users
+        N_max: int
+            maximum number of users
 
     """
-    def __init__(self, id,  adist, sdist,C,N_max,rate=1):
+    def __init__(self, id,  adist, sdist,Cs,N,N_max,Rmin,Rmax,gamma):#the rate has to become the shared variable
         self.id = id    
         self.adist = adist
         self.sdist = sdist
         self.files_sent = 0
-        self.rate=rate
-        #self.N=multiprocessing.Value('i',0)
-        self.N=0
+        
+        #self.N.value=multiprocessing.Value('i',0)
+        self.N=N
+
         self.user_list=[]
         self.event_list=[]
+        self.network_event=multiprocessing.Event()
         self.done_users=[]
+        
+        #Data rate given by antenna
+        self.Cs=Cs
+        
+        ##Slice characteristics
+        self.Rmin=Rmin
+        self.Rmax=Rmax
         self.N_max=N_max
-        self.C=C
+        self.gamma=gamma
 
         #TODO add lists for graphs and statistics 
         #graphing
@@ -53,7 +65,7 @@ class Slice(object):
         """Simulation of a user connceting to the slice and requesting download
         """
         packet_size=self.sdist()
-        self.N+=1
+        self.N.value+=1
         print("Slice id :"+str(self.id)+" |\033[92m User "+str(id)+" joined\033[00m. Packet size to send : "+str(packet_size)+" Interrupting ongoing connections.")
         for i,event in enumerate(self.event_list):
             if(i!=id) and  not (i in self.done_users):
@@ -63,20 +75,24 @@ class Slice(object):
                 
         
         start_time=time.time()
-        print("Slice id :"+str(self.id)+" | N is equal to : "+str(self.N))
+        print("Slice id :"+str(self.id)+" | N is equal to : "+str(self.N.value))
         transmit=True
 
         while(transmit):
             try:
-                start_time=time.time()
+                
                 #TODO add ressource usage
-                user_rate=self.rate/self.N
+                user_rate=self.Cs.value/self.N.value
                 print("Slice id :"+str(self.id)+" | User "+str(id)+ "  Rate is "+str(user_rate))
-                time_to_send=packet_size/user_rate
+
+                try:
+                    time_to_send=packet_size/user_rate
+                except ZeroDivisionError:#If the slice hasnt been allocated ressources we set a very hight time wait
+                    time_to_send=1000000
 
                 #Redundency to insure good functionning
                 if(time_to_send<0):
-                    self.N=self.N-1
+                    self.N.value=self.N.value-1
                     self.files_sent += 1
                 
                     self.time_list.append(time.time())
@@ -91,13 +107,17 @@ class Slice(object):
                 time.sleep(0.15)
 
                 #Send file. Interrupt if event is activated
+                start_time=time.time()
                 self.event_list[id].wait(time_to_send)
+
+                if(self.network_event.is_set()):
+                    raise StopIteration()
 
                 #If reallocation event was activated reallocate
                 if(self.event_list[id].is_set()):
                     raise ConnectionAbortedError()
 
-                self.N=self.N-1
+                self.N.value=self.N.value-1
                 self.files_sent += 1
                 
                 self.time_list.append(time.time())
@@ -108,11 +128,14 @@ class Slice(object):
                 print("Slice id :"+str(self.id)+" |\033[91m User "+str(id)+ " disconnected\033[00m")
             except ConnectionAbortedError:
                 #Change data rate and retransmit
-                print("Slice id :"+str(self.id)+" |\033[94m REALLOCATING\033[00m for user "+str(id)+" with "+ str(self.N)+" users ")
+                print("Slice id :"+str(self.id)+" |\033[94m REALLOCATING\033[00m for user "+str(id)+" with "+ str(self.N.value)+" users ")
                 #Calculate size left
                 time_remaining=time_to_send-time.time()+start_time
                 packet_size=time_remaining*user_rate
                 print("Slice id :"+str(self.id)+" | Remaining size for user "+str(id)+" : "+str(packet_size))
+            except StopIteration:
+                print("Slice id :"+str(self.id)+" |\033[94m REALLOCATING\033[00m for user "+str(id)+" with "+ str(self.N.value)+" users ")
+
 
         #Reallocate at disconnection
         for i,event in enumerate(self.event_list):
@@ -123,7 +146,7 @@ class Slice(object):
                 event.clear()
                 
 
-    def run(self,simulation_status):
+    def run(self,simulation_status,reslicing_event):
         """The generator function used in simulations.
         """
         print("\033[92m"+"Running "+str(self.id)+"\033[00m")
@@ -131,18 +154,25 @@ class Slice(object):
         
         while not simulation_status.is_set():
             # wait for next connection
-            time.sleep(self.adist())
+            reslicing_event.wait(self.adist())
 
-            # create a new user and append to user list
-            if(len(self.user_list)-len(self.done_users))<=self.N_max:
-                
-                self.user_list.append(threading.Thread(target=self.slice_user,args=(counter,),daemon=True))
-                self.event_list.append(threading.Event())
-                self.user_list[-1].start()
+            if(reslicing_event.is_set()):
+                #The network manager has resliced reallocate everything
+                self.network_event.set()
+                time.sleep(0.1)
+                self.network_event.clear()
+                    
+            else:
+                # create a new user and append to user list
+                if(len(self.user_list)-len(self.done_users))<=self.N_max:
+                    
+                    self.user_list.append(threading.Thread(target=self.slice_user,args=(counter,),daemon=True))
+                    self.event_list.append(threading.Event())
+                    self.user_list[-1].start()
 
-                # increment user id
-                counter+=1
-        
+                    # increment user id
+                    counter+=1
+
 
 class Network:
     """Class defining the network and its slices
@@ -150,30 +180,110 @@ class Network:
         Parameters
         ----------
         C: Central capacity of the network
-        t: Simulation time
+        t: float
+            Simulation time
+        simulation_status: Event
+            event announcing the end of the simulation when set
+        resclicing_trigger: int
+            0 for static
+            1 for timed
+        
 
     """
-    def __init__(self,C,t,simulation_status):
+    def __init__(self,C,t,simulation_status,resclicing_trigger):
         self.simulation_time=t
+        self.resclicing_trigger=resclicing_trigger
+
         #TODO set central capacity
-        self.C=multiprocessing.Value('f',C)
+        self.C_value=C
         
 
         #Define the functions for data rates and interarrival rates
-        self.adist=[functools.partial(random.expovariate, 1/1),functools.partial(random.expovariate, 1/1)]
-        self.sdist=[functools.partial(random.expovariate, 1/20),functools.partial(random.expovariate, 1/0.8)]
-        
-        self.slice1= Slice( "\033[93m"+"Slice1"+"\033[00m", self.adist[0], self.sdist[0],self.C,10)
-        self.slice2= Slice( "\033[96m"+"Slice2"+"\033[00m", self.adist[1], self.sdist[1],self.C,10)
+        self.adist=[functools.partial(random.expovariate, 1/2),functools.partial(random.expovariate, 1/1)]
+        self.sdist=[functools.partial(random.expovariate, 1/35),functools.partial(random.expovariate, 1/1)]
 
-        self.process1=multiprocessing.Process(target=self.slice1.run,args=(simulation_status,),daemon=True)
-        self.process2=multiprocessing.Process(target=self.slice2.run,args=(simulation_status,),daemon=True)
+        self.rmin_v=[0.1,1]
+        self.rmax_v=[7,1.5]
+
+        self.gamma_v=[0.3,0.7]
+        self.N_cont=[self.gamma_v[0]*self.C_value/self.rmin_v[0],self.gamma_v[1]*self.C_value/self.rmin_v[1]]
+
+        #print(self.N_cont)
+
+        self.N=[multiprocessing.Value('i',0),multiprocessing.Value('i',0)]
+        self.C_vector=[multiprocessing.Value('f',self.C_value*self.gamma_v[0]),multiprocessing.Value('f',self.C_value*self.gamma_v[1])]
+
+        self.resclicing_event=multiprocessing.Event()
+
+        self.slice1= Slice( "\033[93m"+"Slice1"+"\033[00m", self.adist[0], self.sdist[0],self.C_vector[0],self.N[0],100,self.rmin_v[0],self.rmax_v[0],self.gamma_v[0])
+        self.slice2= Slice( "\033[96m"+"Slice2"+"\033[00m", self.adist[1], self.sdist[1],self.C_vector[1],self.N[1],100,self.rmin_v[1],self.rmax_v[1],self.gamma_v[1])
+
+        self.process1=multiprocessing.Process(target=self.slice1.run,args=(simulation_status,self.resclicing_event,),daemon=True)
+        self.process2=multiprocessing.Process(target=self.slice2.run,args=(simulation_status,self.resclicing_event,),daemon=True)
     
     def run(self):
+        
         self.process1.start()
         self.process2.start()
 
-        time.sleep(self.simulation_time)
+        #? Static assignement
+        #TODO add monitoring for graph generation
+        if self.resclicing_trigger==0:
+            print("\033[91m SLICE1 value of Ns \033[00m",self.N[0].value)
+            print("\033[91m SLICE2 value of Ns \033[00m",self.N[1].value)
+            time.sleep(self.simulation_time/2)
+            print("\033[91m SLICE1 value of Ns \033[00m",self.N[0].value)
+            print("\033[91m SLICE2 value of Ns \033[00m",self.N[1].value)
+            time.sleep(self.simulation_time/2)
+
+        
+        #? Timed resclicing
+        elif self.resclicing_trigger==1:
+            
+            while((time.time()-GLOBAL_START_TIME)<self.simulation_time):
+                #Wait for timer
+                time.sleep(self.simulation_time/10)
+
+                #Retreive simulation variables
+                Ns_now=[self.N[0].value,self.N[1].value]
+
+                #Reslice
+                #TODO activate reallocation list
+                #? Case 1: maximum throuput
+                if(np.dot(Ns_now,self.rmax_v)<=self.C_value):
+                    for i in range(number_of_slices):
+                        self.C_vector[i].value=Ns_now[i]*self.rmax_v[i]
+                    print("\033[93m Network Manager |\033[00m\033[1m RESLICED using case 1 : C = ",[self.C_vector[i].value for i in range(number_of_slices)],"\033[00m")
+                
+                #? Case 2: Total congestion
+                elif(np.dot(Ns_now,self.rmin_v)>self.C_value):
+                    
+                    Ns_min=[min(Ns_now[i], self.N_cont[i]) for i in range(number_of_slices)]
+                    
+                    if(np.dot(Ns_min,self.rmin_v)>=self.C_value):
+                        for i in range(number_of_slices):
+                            self.C_vector[i].value=self.C_value*(Ns_min[i]*self.rmin_v[i])/(np.dot(Ns_min,self.rmin_v))
+                    else:
+                        for i in range(number_of_slices):
+                            print(type((self.C_value-np.dot(Ns_min, self.rmin_v))))
+                            self.C_vector[i].value=(Ns_min[i]*self.rmin_v[i])+(self.C_value-np.dot(Ns_min, self.rmin_v))*((Ns_now[i]-Ns_min[i])*self.rmin_v[i])/(np.dot(np.subtract(Ns_now,Ns_min),self.rmin_v))
+                    
+                    print("\033[93m Network Manager |\033[00m\033[1m RESLICED using case 2 : C = ",[self.C_vector[i].value for i in range(number_of_slices)],"\033[00m")
+
+                #? Case 3: Average number of users
+                elif(np.dot(Ns_now,self.rmax_v)>self.C_value and np.dot(Ns_now,self.rmin_v)<=self.C_value):
+                    result_of_op=solve_optimisation(Ns_now, self.N_cont, self.C_value, self.rmin_v, self.rmax_v)
+                    for i in range(number_of_slices):
+                        self.C_vector[i].value=result_of_op[i]
+                    
+                    print("\033[93m Network Manager |\033[00m\033[1m RESLICED using case 3 : C = ",[self.C_vector[i].value for i in range(number_of_slices)],"\033[00m")
+
+                #Trigger reallocation after reslicing
+                self.resclicing_event.set()
+                time.sleep(0.1)
+                self.resclicing_event.clear()
+        
+        #Activate end of simulation event
         simulation_status.set()
 
         #TODO add graph saving option
@@ -195,31 +305,32 @@ class Network:
 
 
 
-def solve_optimisation(Ns,C,Rmin,Rmax):
+def solve_optimisation(Ns,Ncont,C,Rmin,Rmax):
     """Function for solving the allocation problem
 
         Parameters
         ----------
         Ns : vector of active user per slice
+        Ncont : limit number of users ensuring performance isolation
         C : Available common capacity
         Rmin : minimum data rate per slice
         Rmax : maximum data rate per slice
     """
 
     #Define Variable to be resolved
-        #The variable is Cs. Its a vector of size 2
+        #The variable is Rs. Its a vector of size 2
     x=cp.Variable(2)
     
     #Construct the problem
-    objective = cp.Maximize(cp.sum(W_func(Ns, Ncont)@np.divide(x/Ns)))
-    constraints=[np.dot(x,Ns),x<=Rmax,x>=Rmin]
+    objective = cp.Maximize(cp.sum(np.multiply(W_func(Ns, Ncont),Ns)@x))
+    constraints=[Ns@cp.transpose(x)==C,x<=Rmax,x>=Rmin]
     prob = cp.Problem(objective=objective,constraints=constraints)
     
     #Solve the porblem
     prob.solve()
 
     #Return the value
-    return x.value
+    return np.multiply(x.value,Ns)
 
 def W_func(Ns,Ncont):
     """W function defined in the paper
@@ -238,17 +349,31 @@ def W_func(Ns,Ncont):
             result.append(Ncont[i]/Ns[i])
     return result
     
-#TODO define allocation schemes
 
 if __name__ == '__main__':
-    if len(sys.argv)!=2:
-        raise AttributeError("Input simulation time in seconds as an argument")
+    print("#####################################################")
+    print("############# Starting Slicing Simulator ############")
+    print("#####################################################")
+    print("")
+
+    if len(sys.argv)!=3:
+        raise AttributeError("Input <simulation_time> <type_of_reclicing_trigger>")
     try:
         simulation_time=int(sys.argv[1])
     except TypeError:
-        raise TypeError("Input has to be an integer")
+        raise TypeError("<simulation_time> has to be an integer")
+    try:
+        resclicing_trigger=int(sys.argv[2])
+    except TypeError:
+        raise TypeError("<type_of_reclicing_trigger> has to be an integer")
+    
+    if resclicing_trigger!=0 and resclicing_trigger!=1:
+        raise ValueError("<type_of_reclicing_trigger> can only be 0 (static) or 1 (timed)")
+    
 
     simulation_status=multiprocessing.Event()
-    net=Network(8000,simulation_time,simulation_status)
+    net=Network(20,simulation_time,simulation_status,resclicing_trigger)
+    GLOBAL_START_TIME=time.time()
     number_of_slices=2
     net.run()
+    
