@@ -4,14 +4,10 @@ import functools
 import random
 import multiprocessing
 import threading
-#import logging
 import time
 import sys
 import cvxpy as cp
 
-
-#TODO add capacity checking and requesting from central ressource
-# We do that by creating queues to send data flows form inside the processes
 
 class Slice(object):
     """ Slice of an antenna. Simulates traffic that arrives each adist() and requests a file with sdist() size.
@@ -182,10 +178,8 @@ class Network:
         self.simulation_time=t
         self.resclicing_trigger=resclicing_trigger
 
-        #TODO set central capacity
         self.C_value=C
         
-
         #Define the functions for data rates and interarrival rates
         self.adist=[functools.partial(random.expovariate, 1/2),functools.partial(random.expovariate, 1/1)]
         self.sdist=[functools.partial(random.expovariate, 1/35),functools.partial(random.expovariate, 1/1)]
@@ -339,7 +333,7 @@ def monitor(c_1,c_2,n_1,n_2,rmin,rmax,simulation_status,simulation_time,simu_typ
         ax3.set_xlabel('time')
 
         # Plot n2_list on first subplot
-        ax4.plot(time_list, n2_list, color='blue')
+        ax4.plot(time_list, n2_list, color='red')
         ax4.set_ylabel('Ns2')
         ax4.set_xlabel('time')
 
