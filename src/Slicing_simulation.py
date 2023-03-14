@@ -32,11 +32,11 @@ class Slice(object):
             maximum number of users
 
     """
-    def __init__(self, id,  adist, sdist,Cs,N,N_max,Rmin,Rmax,gamma):#the rate has to become the shared variable
+    def __init__(self, id,  adist, sdist,Cs,N,N_max,Rmin,Rmax,gamma,files_sent):#the rate has to become the shared variable
         self.id = id    
         self.adist = adist
         self.sdist = sdist
-        self.files_sent = 0
+        self.files_sent = files_sent
         
         #self.N.value=multiprocessing.Value('i',0)
         self.N=N
@@ -55,10 +55,6 @@ class Slice(object):
         self.N_max=N_max
         self.gamma=gamma
 
-        #TODO add lists for graphs and statistics 
-        #graphing
-        self.time_list=[]
-        self.sent_list=[]
 
 
     def slice_user(self,id):
@@ -93,11 +89,7 @@ class Slice(object):
                 #Redundency to insure good functionning
                 if(time_to_send<0):
                     self.N.value=self.N.value-1
-                    self.files_sent += 1
-                
-                    self.time_list.append(time.time())
-                    self.sent_list.append(self.files_sent)
-
+                    self.files_sent.value += 1
                     self.done_users.append(id)
                     transmit=False
                     print("Slice id :"+str(self.id)+" |\033[91m User "+str(id)+ " disconnected\033[00m")
@@ -118,11 +110,7 @@ class Slice(object):
                     raise ConnectionAbortedError()
 
                 self.N.value=self.N.value-1
-                self.files_sent += 1
-                
-                self.time_list.append(time.time())
-                self.sent_list.append(self.files_sent)
-
+                self.files_sent.value += 1
                 self.done_users.append(id)
                 transmit=False
                 print("Slice id :"+str(self.id)+" |\033[91m User "+str(id)+ " disconnected\033[00m")
@@ -208,21 +196,21 @@ class Network:
         self.gamma_v=[0.3,0.7]
         self.N_cont=[self.gamma_v[0]*self.C_value/self.rmin_v[0],self.gamma_v[1]*self.C_value/self.rmin_v[1]]
 
-        #print(self.N_cont)
-
         self.N=[multiprocessing.Value('i',0),multiprocessing.Value('i',0)]
         self.C_vector=[multiprocessing.Value('f',self.C_value*self.gamma_v[0]),multiprocessing.Value('f',self.C_value*self.gamma_v[1])]
 
         self.resclicing_event=multiprocessing.Event()
 
-        self.slice1= Slice( "\033[93m"+"Slice1"+"\033[00m", self.adist[0], self.sdist[0],self.C_vector[0],self.N[0],100,self.rmin_v[0],self.rmax_v[0],self.gamma_v[0])
-        self.slice2= Slice( "\033[96m"+"Slice2"+"\033[00m", self.adist[1], self.sdist[1],self.C_vector[1],self.N[1],100,self.rmin_v[1],self.rmax_v[1],self.gamma_v[1])
+        self.files_sent=[multiprocessing.Value('i',0),multiprocessing.Value('i',0)]
+
+        self.slice1= Slice( "\033[93m"+"Slice1"+"\033[00m", self.adist[0], self.sdist[0],self.C_vector[0],self.N[0],100,self.rmin_v[0],self.rmax_v[0],self.gamma_v[0],self.files_sent[0])
+        self.slice2= Slice( "\033[96m"+"Slice2"+"\033[00m", self.adist[1], self.sdist[1],self.C_vector[1],self.N[1],100,self.rmin_v[1],self.rmax_v[1],self.gamma_v[1],self.files_sent[1])
 
         self.process1=multiprocessing.Process(target=self.slice1.run,args=(simulation_status,self.resclicing_event,),daemon=True)
         self.process2=multiprocessing.Process(target=self.slice2.run,args=(simulation_status,self.resclicing_event,),daemon=True)
 
 
-        self.monitor_process=multiprocessing.Process(target=monitor,args=(self.C_vector[0],self.C_vector[1],self.N[0],self.N[1],self.rmin_v,self.rmax_v,simulation_status,self.simulation_time,),daemon=False)
+        self.monitor_process=multiprocessing.Process(target=monitor,args=(self.C_vector[0],self.C_vector[1],self.N[0],self.N[1],self.rmin_v,self.rmax_v,simulation_status,self.simulation_time,self.resclicing_trigger,),daemon=False)
     
     
 
@@ -236,14 +224,9 @@ class Network:
         #? Static assignement
         #TODO add monitoring for graph generation
         if self.resclicing_trigger==0:
-            print("\033[91m SLICE1 value of Ns \033[00m",self.N[0].value)
-            print("\033[91m SLICE2 value of Ns \033[00m",self.N[1].value)
-            time.sleep(self.simulation_time/2)
-            print("\033[91m SLICE1 value of Ns \033[00m",self.N[0].value)
-            print("\033[91m SLICE2 value of Ns \033[00m",self.N[1].value)
-            time.sleep(self.simulation_time/2)
+            time.sleep(self.simulation_time)
+            
 
-        
         #? Timed resclicing
         elif self.resclicing_trigger==1:
             
@@ -304,18 +287,24 @@ class Network:
 
         print("\033[92m"+"Network simulation complete"+"\033[00m")
 
+        print("Number of files sent : ",[self.files_sent[0].value,self.files_sent[1].value])
 
-def monitor(c_1,c_2,n_1,n_2,rmin,rmax,simulation_status,simulation_time):
+
+def monitor(c_1,c_2,n_1,n_2,rmin,rmax,simulation_status,simulation_time,simu_type):
         """Function monitoring the slices to generate graphs
         """
         init_time=time.time()
         time_list=[]
         rs1_list=[]
         rs2_list=[]
+        n1_list=[]
+        n2_list=[]
         #start time
         time.sleep(2)
         while not simulation_status.is_set():
             time_list.append(time.time()-init_time)
+            n1_list.append(n_1.value)
+            n2_list.append(n_2.value)
             try:
                 rs1_list.append(c_1.value/n_1.value)
             except:
@@ -332,15 +321,27 @@ def monitor(c_1,c_2,n_1,n_2,rmin,rmax,simulation_status,simulation_time):
         print("####### Printing graphs ########")
         print("")
         # Create figure and subplots
-        fig, (ax1, ax2) = plt.subplots(2, 1, sharex=False)
+        fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, sharex=False)
 
         # Plot rs1_list on first subplot
         ax1.plot(time_list, rs1_list, color='blue')
         ax1.set_ylabel('Rs1')
+        ax1.set_xlabel('time')
 
         # Plot rs2_list on second subplot
         ax2.plot(time_list, rs2_list, color='red')
         ax2.set_ylabel('Rs2')
+        ax1.set_xlabel('time')
+
+        # Plot n1_list on first subplot
+        ax3.plot(time_list, n1_list, color='blue')
+        ax3.set_ylabel('Ns1')
+        ax3.set_xlabel('time')
+
+        # Plot n2_list on first subplot
+        ax4.plot(time_list, n2_list, color='blue')
+        ax4.set_ylabel('Ns2')
+        ax4.set_xlabel('time')
 
         #Plot Rsmin and Rsmax for each graph
         ax1.axhline(y=rmin[0], color='green', linestyle='-')
@@ -348,14 +349,14 @@ def monitor(c_1,c_2,n_1,n_2,rmin,rmax,simulation_status,simulation_time):
         ax2.axhline(y=rmin[1], color='green', linestyle='-')
         ax2.axhline(y=rmax[1], color='orange', linestyle='-')
 
-        #Draw vertical Axes for reslicing
-        count=simulation_time/10
-        for i in range(1,int(simulation_time),int(simulation_time/10)):
-            ax1.axvline(x=i, color='yellow', linestyle='--')
-            ax2.axvline(x=i, color='yellow', linestyle='--')
-
-        # Add x-axis label to bottom subplot
-        ax2.set_xlabel('time')
+        if(simu_type==1):
+            #Draw vertical Axes for reslicing
+            count=simulation_time/10
+            for i in range(0,int(simulation_time),int(simulation_time/10)):
+                ax1.axvline(x=i, color='yellow', linestyle='--')
+                ax2.axvline(x=i, color='yellow', linestyle='--')
+                ax3.axvline(x=i, color='yellow', linestyle='--')
+                ax4.axvline(x=i, color='yellow', linestyle='--')
 
         # Show plot
         plt.show()
